@@ -4,4 +4,5 @@ variable "username" {
 
 variable "password" {
     default = "Password1234!"
+    sensitive = true
 }
