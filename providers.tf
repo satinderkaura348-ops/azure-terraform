@@ -13,13 +13,7 @@ provider "azurerm" {
 
 }
 
-resource "azurerm_resource_group" "my_rg" {
-    name = "my_rg"
-    location = "Australia Southeast"
 
-    tags = {
-        environment = "dev"
-        source = "Terraform"
-    }
-}
+
+
 
