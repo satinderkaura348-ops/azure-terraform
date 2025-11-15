@@ -2,7 +2,7 @@ variable "prefix" {
     default = "my_rg"
 }
 
-
+# creating a resource group in dev env
 resource "azurerm_resource_group" "rg" {
     name = "${var.prefix}"
     location = "Australia Southeast"
@@ -13,7 +13,7 @@ resource "azurerm_resource_group" "rg" {
     }
 }
 
-
+# private virtual network
 resource "azurerm_virtual_network" "vn1" {
     name = "${var.prefix}-network"
     address_space = ["10.0.0.0/16"]
@@ -21,6 +21,7 @@ resource "azurerm_virtual_network" "vn1" {
     resource_group_name = azurerm_resource_group.rg.name 
 } 
 
+# private subnet for master vm
 resource "azurerm_subnet" "private1" {
     name = "private1"
     resource_group_name = azurerm_resource_group.rg.name 
@@ -29,6 +30,7 @@ resource "azurerm_subnet" "private1" {
 
 }
 
+# private subnet for slave vm
 resource "azurerm_subnet" "private2" {
     name = "private2"
     resource_group_name = azurerm_resource_group.rg.name 
@@ -37,6 +39,27 @@ resource "azurerm_subnet" "private2" {
 
 }
 
+# adding public ip for vm1
+resource "azurerm_public_ip" "vm1_public" {
+    name = "vm1-pubip"
+    location = azurerm_resource_group.rg.location 
+    resource_group_name = azurerm_resource_group.rg.name 
+    allocation_method = "Static"
+    sku = "Standard"
+}
+
+
+# adding public ip for vm2
+resource "azurerm_public_ip" "vm2_public" {
+    name = "vm2-pubip"
+    location = azurerm_resource_group.rg.location 
+    resource_group_name = azurerm_resource_group.rg.name 
+    allocation_method = "Static"
+    sku = "Standard"
+}
+
+
+# master vm's network interface
 resource "azurerm_network_interface" "main1" {
     name = "${var.prefix}-nic1"
     location = azurerm_resource_group.rg.location 
@@ -46,9 +69,12 @@ resource "azurerm_network_interface" "main1" {
         name = "testconfiguration1"
         subnet_id = azurerm_subnet.private1.id 
         private_ip_address_allocation = "Dynamic"
+        public_ip_address_id = azurerm_public_ip.vm1_public.id 
     }
 }
 
+
+# slave vm's network interface
 resource "azurerm_network_interface" "main2" {
     name = "${var.prefix}-nic2"
     location = azurerm_resource_group.rg.location 
@@ -58,7 +84,20 @@ resource "azurerm_network_interface" "main2" {
         name = "testconfiguration1"
         subnet_id = azurerm_subnet.private2.id 
         private_ip_address_allocation = "Dynamic"
+        public_ip_address_id = azurerm_public_ip.vm2_public.id 
     }
+}
+
+# associating sg with nic1
+resource "azurerm_network_interface_security_group_association" "private1_nsg" {
+    network_interface_id = azurerm_network_interface.main1.id 
+    network_security_group_id = azurerm_network_security_group.my_rg_sg.id 
+}
+
+# associating sg with nic2
+resource "azurerm_network_interface_security_group_association" "private2_nsg" {
+    network_interface_id = azurerm_network_interface.main2.id 
+    network_security_group_id = azurerm_network_security_group.my_rg_sg.id 
 }
 
 # resource "azurerm_virtual_machine" "vm1" {
@@ -140,46 +179,53 @@ resource "azurerm_network_interface" "main2" {
 # }
 
 
-
+# variable for dynamic creating of vms
 variable "vm_count" {
   default = 2
 }
 
-resource "azurerm_virtual_machine" "vm" {
+
+locals {
+  nic_ids = [
+    azurerm_network_interface.main1.id,
+    azurerm_network_interface.main2.id
+  ]
+}
+
+
+
+# creating vms dynamically
+resource "azurerm_linux_virtual_machine" "vm" {
   count                = var.vm_count
   name                 = "${var.prefix}-vm${count.index + 1}"
+  computer_name         = "myrgvm${count.index + 1}" 
   location             = azurerm_resource_group.rg.location
   resource_group_name  = azurerm_resource_group.rg.name
-  network_interface_ids = [element([azurerm_network_interface.main1.id, azurerm_network_interface.main2.id], count.index % 2)]
-  vm_size              = "Standard_D2s_V3"
-  delete_os_disk_on_termination = true
-  delete_data_disks_on_termination = true
+  network_interface_ids = [local.nic_ids[count.index]]
+  size              = "Standard_D2s_V3"
+#   delete_data_disks_on_termination = true
+  admin_username = var.username
+  admin_ssh_key {
+    username   = var.username
+    public_key = file("~/.ssh/id_ed25519.pub")
+  }
 
-  storage_image_reference {
+  source_image_reference {
     publisher = "Canonical"
     offer     = "0001-com-ubuntu-server-jammy"
     sku       = "22_04-lts"
     version   = "latest"
   }
 
-  storage_os_disk {
+  os_disk {
     name              = "myosdisk${count.index + 1}"
     caching           = "ReadWrite"
-    create_option     = "FromImage"
-    managed_disk_type = "Standard_LRS"
+    storage_account_type = "Standard_LRS"
   }
 
-  os_profile {
-    computer_name  = "vm${count.index + 1}"
-    admin_username = var.username
-    admin_password = var.password
-  }
-
-  os_profile_linux_config {
-    disable_password_authentication = false
-  }
 
   tags = {
     environment = "dev"
   }
 }
+
